@@ -1,10 +1,15 @@
 import asyncio
 import configparser
 import socket
+import time
 
 import asyncssh
 import telnetlib3
 from dnslib import DNSRecord
+
+# Простая реализация кэша для хранения IP-адресов, DNS имен и времени их добавления
+ip_cache_data = {}
+dns_cache_data = {}
 
 
 # Читаем конфиг
@@ -27,7 +32,7 @@ def send_dns_query(data, public_dns):
     return response
 
 
-# Измененная функция для обработки полученного ответа
+# Функция обработки полученного ответа
 def process_dns_response(dns_response):
     resolved_addresses = []
     domain = ""
@@ -41,6 +46,20 @@ def process_dns_response(dns_response):
     except Exception as e:
         print(f"Error processing DNS response: {e}")
     return domain, resolved_addresses
+
+
+# Функция кэширования DNS имен для снижения частоты обращения к DNS серверу
+def dns_cache(domain, resolved_addresses):
+    global dns_cache_data
+    ttl = 60  # Время жизни DNS имени в кэше в секундах
+    current_time = time.time()
+    if domain in dns_cache_data:
+        if current_time - dns_cache_data[domain]['timestamp'] <= ttl:  # Проверяем время жизни записи в кэше
+            return dns_cache_data[domain]['resolved_addresses']  # Возвращаем ранее разрешенные IP-адреса
+        else:
+            del dns_cache_data[domain]  # Удаляем запись из кэша, если время жизни истекло
+    dns_cache_data[domain] = {'resolved_addresses': resolved_addresses, 'timestamp': current_time}  # Добавляем в кэш
+    return resolved_addresses
 
 
 # Поиск DNS имени в фильтре
@@ -62,14 +81,14 @@ def compare_dns(f_domain, domain_file):
     return False
 
 
-# SSH
+# SSH только для keenetic CLI
 async def send_commands_via_ssh(router_ip, ssh_port, login, password, commands):
     try:
         async with asyncssh.connect(router_ip, port=ssh_port, username=login, password=password,
                                     known_hosts=None) as conn:
             for command in commands:
                 result = await conn.run(command)
-                print(result.stdout, end='')
+                # print(result.stdout, end='')  # Отладочное сообщение
                 if result.stderr:
                     print(result.stderr, end='')
 
@@ -97,13 +116,26 @@ async def send_commands_via_telnet(router_ip, router_port, login, password, comm
                     expect, send = next(ruleiter)
                 except StopIteration:
                     break
-            print(outp, flush=True)  # Отладочное сообщение
+            # print(outp, flush=True)  # Отладочное сообщение
         for command in commands:
             writer.write(command)
             writer.write('\r\n')
 
     except Exception as e:
         print(f"Error occurred: {e}")
+
+
+# Функция кэширования IP-адресов для снижения частоты обращения к роутеру
+def ip_cache(address):
+    global ip_cache_data
+    ttl = 10800  # Время жизни IP в кэше в секундах
+    current_time = time.time()
+    if address in ip_cache_data:
+        if current_time - ip_cache_data[address] <= ttl:  # Проверяем время жизни записи в кэше
+            return True  # IP есть в кэше и он еще не истек, возвращаем True
+        else:
+            del ip_cache_data[address]  # IP есть в кэше, но время его жизни истекло, удаляем запись
+    return False  # IP-адреса нет в кэше или время его жизни истекло, возвращаем False
 
 
 # Основная функция
@@ -124,7 +156,7 @@ async def main():
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)  # Создаем сокет для UDP соединения
 
     server_socket.bind((server_ip, server_port))  # Привязываем сервер к адресу и порту
-    print('DNS Server listening on {}:{}'.format(server_ip, server_port))  # Отладочное сообщение DNS сервер запущен
+    print('DNS Server listening on {}:{}'.format(server_ip, server_port))  # Отладочное сообщение - сервер запущен
 
     while True:
         data, client_address = server_socket.recvfrom(1024)  # Получаем данные от клиента
@@ -135,16 +167,20 @@ async def main():
 
         server_socket.sendto(dns_response, client_address)  # Отправляем ответ клиенту
 
-        match = compare_dns(f_domain, domain_file)  # Сравнение DNS имени из запроса с фильтром
+        match = compare_dns(f_domain, domain_file)  # Проверяем совпадение DNS имени с фильтром
         if match:
-            commands = [f"ip route {str(address).rstrip('.')}/32 {eth_id}" for address in
-                        resolved_addresses]
-            commands.append("exit")
-            print(f"{f_domain} найден в фильтре, добавляем маршрут:")  # Отладочное сообщение
-            if connection_type == 'ssh':
-                await send_commands_via_ssh(router_ip, router_port, login, password, commands)
-            elif connection_type == 'telnet':
-                await send_commands_via_telnet(router_ip, router_port, login, password, commands)
+            for address in resolved_addresses:  # Проверяем наличие IP-адресов в кэше
+                if not ip_cache(str(address).rstrip('.')):  # Если IP нет в кэше, добавляем статический маршрут
+                    commands = [f"ip route {str(address).rstrip('.')}/32 {eth_id}" for address in resolved_addresses]
+                    commands.append("exit")
+                    print(f"{f_domain} найден в фильтре, добавляем маршрут")  # Отладочное сообщение
+                    ip_cache_data[str(address).rstrip('.')] = time.time()  # Добавляем IP в кэш
+                    if connection_type == 'ssh':  # Добавление статического маршрута по SHH
+                        await send_commands_via_ssh(router_ip, router_port, login, password, commands)
+                    elif connection_type == 'telnet':  # Добавление статического маршрута по telnet
+                        await send_commands_via_telnet(router_ip, router_port, login, password, commands)
+                else:
+                    print(f"Маршрут к {f_domain} был добавлен ранее")  # Отладочное сообщение
 
 
 if __name__ == "__main__":

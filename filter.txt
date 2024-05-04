@@ -1,1 +1,4 @@
 exemple.com
+1.exemple.com
+exemple.ru
+2.exemple.ru

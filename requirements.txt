@@ -2,3 +2,4 @@ telnetlib3~=2.0.4
 configparser~=6.0.1
 dnslib~=0.9.24
 asyncssh~=2.14.2
+cachetools~=5.3.3

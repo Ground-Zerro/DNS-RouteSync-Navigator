@@ -26,13 +26,14 @@ def read_config(filename: str) -> Optional[configparser.SectionProxy]:
         return None
 
 
-# Функция для отправки DNS запросов к публичному DNS серверу
-def send_dns_query(data: bytes, public_dns: str) -> Optional[bytes]:
+# Асинхронная функция для отправки DNS запросов к публичному DNS серверу
+async def send_dns_query(data: bytes, public_dns: str) -> Optional[bytes]:
+    loop = asyncio.get_event_loop()
     client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     client_socket.settimeout(5)  # Устанавливаем тайм-аут на 5 секунд
     try:
-        client_socket.sendto(data, (public_dns, 53))
-        response, _ = client_socket.recvfrom(1024)
+        await loop.run_in_executor(None, client_socket.sendto, data, (public_dns, 53))
+        response, _ = await loop.run_in_executor(None, client_socket.recvfrom, 1024)
         return response
     except socket.timeout:
         print(f"Тайм-аут при отправке DNS запроса к {public_dns}")
@@ -78,8 +79,8 @@ def compare_dns(f_domain: str, domain_file: str) -> bool:
                 filter_domain_parts = filter_domain.split('.')
                 if len(name_parts) < len(filter_domain_parts):
                     continue
-                match = all(name_parts[i] == filter_domain_parts[i] for i in range(-1,
-                                                                                   -len(filter_domain_parts) - 1, -1))
+                match = all(name_parts[i] == filter_domain_parts[i]
+                            for i in range(-1, -len(filter_domain_parts) - 1, -1))
                 if match:
                     return True
     except Exception as e:
@@ -88,10 +89,11 @@ def compare_dns(f_domain: str, domain_file: str) -> bool:
 
 
 # SSH только для keenetic CLI
-async def send_commands_via_ssh(router_ip: str, ssh_port: int, login: str, password: str, commands: List[str]) -> None:
+async def send_commands_via_ssh(router_ip: str, ssh_port: int, login: str,
+                                password: str, commands: List[str]) -> None:
     try:
-        async with asyncssh.connect(router_ip, port=ssh_port, username=login, password=password,
-                                    known_hosts=None) as conn:
+        async with (asyncssh.connect(router_ip, port=ssh_port, username=login, password=password, known_hosts=None)
+                    as conn):
             for command in commands:
                 result = await conn.run(command)
                 if result.stderr:
@@ -156,39 +158,44 @@ async def main() -> None:
 
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     server_socket.settimeout(10)  # Устанавливаем тайм-аут на 10 секунд для сервера
-    try:
-        server_socket.bind((server_ip, server_port))
-        print(f'DNS Server listening on {server_ip}:{server_port}')
+    loop = asyncio.get_event_loop()
+    server_socket.bind((server_ip, server_port))
+    print(f'DNS Server listening on {server_ip}:{server_port}')
 
+    async def handle_client(data: bytes, client_address: Tuple[str, int]) -> None:
+        dns_response = await send_dns_query(data, public_dns)
+        if dns_response:
+            f_domain, resolved_addresses = process_dns_response(dns_response)
+            server_socket.sendto(dns_response, client_address)
+            match = compare_dns(f_domain, domain_file)
+            if match:
+                for address in resolved_addresses:
+                    if not ip_cache(address.rstrip('.')):
+                        commands = [f"ip route {address.rstrip('.')}/32 {eth_id}" for address in resolved_addresses]
+                        commands.append("exit")
+                        print(f"{f_domain} найден в фильтре, добавляем маршрут")
+                        ip_cache_data[address.rstrip('.')] = time.time()
+                        if connection_type == 'ssh':
+                            await send_commands_via_ssh(router_ip, router_port, login, password, commands)
+                        elif connection_type == 'telnet':
+                            await send_commands_via_telnet(router_ip, router_port, login, password, commands)
+                    else:
+                        print(f"Маршрут к {f_domain} был добавлен ранее")
+
+    async def recvfrom_loop():
         while True:
             try:
-                data, client_address = server_socket.recvfrom(1024)
-                dns_response = send_dns_query(data, public_dns)
-                if dns_response:
-                    f_domain, resolved_addresses = process_dns_response(dns_response)
-                    server_socket.sendto(dns_response, client_address)
-                    match = compare_dns(f_domain, domain_file)
-                    if match:
-                        for address in resolved_addresses:
-                            if not ip_cache(address.rstrip('.')):
-                                commands = [f"ip route {address.rstrip('.')}/32 {eth_id}" for
-                                            address in resolved_addresses]
-                                commands.append("exit")
-                                print(f"{f_domain} найден в фильтре, добавляем маршрут")
-                                ip_cache_data[address.rstrip('.')] = time.time()
-                                if connection_type == 'ssh':
-                                    await send_commands_via_ssh(router_ip, router_port, login, password, commands)
-                                elif connection_type == 'telnet':
-                                    await send_commands_via_telnet(router_ip, router_port, login, password, commands)
-                            else:
-                                print(f"Маршрут к {f_domain} был добавлен ранее")
+                data, client_address = await loop.run_in_executor(None, server_socket.recvfrom, 1024)
+                asyncio.create_task(handle_client(data, client_address))
             except socket.timeout:
                 print("Тайм-аут при ожидании данных от клиента")
             except Exception as e:
                 print(f"Ошибка в основной петле: {e}")
+
+    try:
+        await recvfrom_loop()
     finally:
         server_socket.close()
-
 
 if __name__ == "__main__":
     asyncio.run(main())

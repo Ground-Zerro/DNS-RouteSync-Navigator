@@ -6,7 +6,6 @@ import time
 from typing import Tuple, List, Optional
 
 import asyncssh
-import telnetlib3
 from cachetools import TTLCache
 from dnslib import DNSRecord, DNSError
 
@@ -102,37 +101,9 @@ async def send_commands_via_ssh(router_ip: str, ssh_port: int, login: str, passw
         for command in commands:
             result = await conn.run(command)
             if result.stderr:
-                logging.error(result.stderr, end='')
+                logging.error(result.stderr)
     except asyncssh.Error as e:
         logging.error(f"Ошибка при выполнении команд через SSH: {e}")
-
-
-# Telnet только для keenetic CLI ==ПРОВЕРИТЬ!! Возможно поломал пока ковырял SSH...==
-async def send_commands_via_telnet(router_ip: str, router_port: int, login: str, password: str,
-                                   commands: List[str]) -> None:
-    try:
-        reader, writer = await telnetlib3.open_connection(router_ip, router_port)
-        rules = [('Login:', login), ('Password:', password), ('(config)>', None)]
-        ruleiter = iter(rules)
-        expect, send = next(ruleiter)
-        while True:
-            outp = await reader.read(1024)
-            if not outp:
-                break
-
-            if expect in outp:
-                if send is not None:
-                    writer.write(send)
-                    writer.write('\r\n')
-                try:
-                    expect, send = next(ruleiter)
-                except StopIteration:
-                    break
-        for command in commands:
-            writer.write(command)
-            writer.write('\r\n')
-    except Exception as e:
-        logging.error(f"Ошибка при выполнении команд Telnet: {e}")
 
 
 # Функция кэширования IP-адресов для снижения частоты обращения к роутеру
@@ -151,7 +122,6 @@ async def main() -> None:
         router_port = int(config_data['router_port'])
         login = config_data['login']
         password = config_data['password']
-        connection_type = config_data['connection_type']
         eth_id = config_data['eth_id']
         domain_file = config_data['domain_file']
         public_dns = config_data['public_dns']
@@ -180,13 +150,11 @@ async def main() -> None:
                         commands = [f"ip route {address.rstrip('.')}/32 {eth_id}" for address in resolved_addresses]
                         logging.info(f"домен {f_domain} найден в фильтре - добавляем маршрут для него")
                         ip_cache_data[address.rstrip('.')] = time.time()
-                        if connection_type == 'ssh':
-                            await send_commands_via_ssh(router_ip, router_port, login, password, commands)
-                        elif connection_type == 'telnet':
-                            await send_commands_via_telnet(router_ip, router_port, login, password, commands)
+                        await send_commands_via_ssh(router_ip, router_port, login, password, commands)
                     else:
                         remaining_ttl = int((ip_cache_data[address.rstrip('.')] + 10800 - time.time()) / 60)
-                        logging.info(f"Маршрут к {f_domain} есть в кэше, оставшееся время жизни: {remaining_ttl} минут")
+                        logging.info(f"{address.rstrip('.')} есть в кэше, оставшееся время жизни:"
+                                     f" {remaining_ttl} минут")
 
     async def recvfrom_loop():
         while True:

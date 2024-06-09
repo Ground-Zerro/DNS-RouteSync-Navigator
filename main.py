@@ -9,19 +9,24 @@ import asyncssh
 from cachetools import TTLCache
 from dnslib import DNSRecord, DNSError
 
+
 # Настройка логгирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+
 # Кэш для хранения IP-адресов и DNS имен
-ip_cache_data = TTLCache(maxsize=1000, ttl=10800)  # Кэш IP адресов с TTL 3 часа
+ip_cache_data = TTLCache(maxsize=1000, ttl=21600)  # Кэш IP адресов с TTL 6 часов
 dns_cache_data = TTLCache(maxsize=1000, ttl=60)    # Кэш DNS имен с TTL 1 минута
+
 
 # Глобальная переменная для хранения доменных имен
 domain_list = []
 
+
 # Переменные для работы с двумя DNS серверами
 dns_servers = []
 request_counter = 0
+
 
 # Читаем конфиг
 def read_config(filename: str) -> Optional[configparser.SectionProxy]:
@@ -37,6 +42,7 @@ def read_config(filename: str) -> Optional[configparser.SectionProxy]:
         logging.error(f"Ошибка загрузки файла конфигурации {filename}: {e}")
         return None
 
+
 # Загрузка доменных имен в память
 def load_domain_list(domain_file: str) -> List[str]:
     try:
@@ -47,6 +53,7 @@ def load_domain_list(domain_file: str) -> List[str]:
     except Exception as e:
         logging.error(f"Ошибка загрузки доменных имен из файла {domain_file}: {e}")
         return []
+
 
 # Функция для отправки DNS запросов к публичному DNS серверу
 async def send_dns_query(data: bytes) -> Optional[bytes]:
@@ -72,6 +79,7 @@ async def send_dns_query(data: bytes) -> Optional[bytes]:
     finally:
         client_socket.close()
 
+
 # Функция обработки ответа от DNS сервера
 def process_dns_response(dns_response: bytes) -> Tuple[str, List[str]]:
     resolved_addresses = []
@@ -87,12 +95,14 @@ def process_dns_response(dns_response: bytes) -> Tuple[str, List[str]]:
         logging.error(f"Ошибка обработки DNS ответа: {e}")
     return domain, resolved_addresses
 
+
 # Функция кэширования DNS имен для снижения частоты обращения к DNS серверу
 def dns_cache(domain: str, resolved_addresses: List[str]) -> List[str]:
     if domain in dns_cache_data:
         return dns_cache_data[domain]
     dns_cache_data[domain] = resolved_addresses
     return resolved_addresses
+
 
 # Поиск DNS имени в фильтре
 def compare_dns(f_domain: str) -> bool:
@@ -110,6 +120,7 @@ def compare_dns(f_domain: str) -> bool:
         logging.error(f"Ошибка сравнения DNS: {e}")
     return False
 
+
 # SSH только для keenetic CLI
 async def send_commands_via_ssh(router_ip: str, ssh_port: int, login: str, password: str, commands: List[str]) -> None:
     try:
@@ -121,9 +132,11 @@ async def send_commands_via_ssh(router_ip: str, ssh_port: int, login: str, passw
     except asyncssh.Error as e:
         logging.error(f"Ошибка при выполнении команд через SSH: {e}")
 
+
 # Функция кэширования IP-адресов для снижения частоты обращения к роутеру
 def ip_cache(address: str) -> bool:
     return address in ip_cache_data
+
 
 # Основная функция
 async def main() -> None:
@@ -180,7 +193,7 @@ async def main() -> None:
                             logging.error(f"Ошибка при выполнении команд через SSH для {address}: {e}")
                     else:
                         remaining_ttl = int((ip_cache_data[address.rstrip('.')] + 10800 - time.time()) / 60)
-                        logging.info(f"{address.rstrip('.')} есть в кэше, оставшееся время жизни: {remaining_ttl} минут")
+                        logging.info(f"{address.rstrip('.')} кэширован, оставшееся время жизни: {remaining_ttl} минут")
 
     async def recvfrom_loop():
         while True:

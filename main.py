@@ -12,13 +12,11 @@ from dnslib import DNSRecord, DNSError
 # Настройка логгирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-
 # Кэш для хранения IP-адресов и DNS имен
 ip_cache_data = TTLCache(maxsize=1000, ttl=21600)  # Кэш IP адресов с TTL 6 часов
 dns_cache_data = TTLCache(maxsize=1000, ttl=60)  # Кэш DNS имен с TTL 1 минута
 
-
-# Функция чтения конфигурации
+# Читаем конфиг
 def read_config(filename: str) -> Optional[configparser.SectionProxy]:
     config = configparser.ConfigParser()
     try:
@@ -32,8 +30,7 @@ def read_config(filename: str) -> Optional[configparser.SectionProxy]:
         logging.error(f"Ошибка загрузки файла конфигурации {filename}: {e}")
         return None
 
-
-# Функция загрузки доменных имен в память
+# Загрузка доменных имен в память
 def load_domain_list(domain_file: str) -> List[str]:
     try:
         with open(domain_file, 'r', encoding='utf-8-sig') as file:
@@ -44,8 +41,7 @@ def load_domain_list(domain_file: str) -> List[str]:
         logging.error(f"Ошибка загрузки доменных имен из файла {domain_file}: {e}")
         return []
 
-
-# Функция для отправки DNS запросов к публичным DNS серверам
+# Функция для отправки DNS запросов к публичному DNS серверу
 async def send_dns_query(data: bytes, dns_servers: List[str], request_counter: int) -> Optional[bytes]:
     loop = asyncio.get_event_loop()
     client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -67,7 +63,6 @@ async def send_dns_query(data: bytes, dns_servers: List[str], request_counter: i
     finally:
         client_socket.close()
 
-
 # Функция обработки ответа от DNS сервера
 def process_dns_response(dns_response: bytes) -> Tuple[str, List[str]]:
     resolved_addresses = []
@@ -78,11 +73,10 @@ def process_dns_response(dns_response: bytes) -> Tuple[str, List[str]]:
             if r.rtype == 1:  # A record
                 resolved_addresses.append(str(r.rdata))
                 domain = str(r.rname)
-                logging.info(f"{r.rname} решен в {r.rdata}")
+                logging.info(f"Resolved {r.rname} to {r.rdata}")
     except DNSError as e:
         logging.error(f"Ошибка обработки DNS ответа: {e}")
     return domain, resolved_addresses
-
 
 # Функция кэширования DNS имен для снижения частоты обращения к DNS серверу
 def dns_cache(domain: str, resolved_addresses: List[str]) -> List[str]:
@@ -91,8 +85,7 @@ def dns_cache(domain: str, resolved_addresses: List[str]) -> List[str]:
     dns_cache_data[domain] = resolved_addresses
     return resolved_addresses
 
-
-# Функция сравнения DNS имени с фильтром
+# Поиск DNS имени в фильтре
 def compare_dns(f_domain: str, domain_list: List[str]) -> bool:
     try:
         name_parts = f_domain.rstrip('.').split('.')
@@ -108,7 +101,6 @@ def compare_dns(f_domain: str, domain_list: List[str]) -> bool:
         logging.error(f"Ошибка сравнения DNS: {e}")
     return False
 
-
 # Класс для пула SSH соединений
 class SSHConnectionPool:
     def __init__(self, max_size: int):
@@ -116,8 +108,7 @@ class SSHConnectionPool:
         self.max_size = max_size
         self.size = 0
 
-    async def get_connection(self, router_ip: str, ssh_port: int, login: str,
-                             password: str) -> asyncssh.SSHClientConnection:
+    async def get_connection(self, router_ip: str, ssh_port: int, login: str, password: str) -> asyncssh.SSHClientConnection:
         if self.pool.empty() and self.size < self.max_size:
             connection = await asyncssh.connect(
                 router_ip, port=ssh_port, username=login, password=password, known_hosts=None
@@ -136,10 +127,8 @@ class SSHConnectionPool:
             connection.close()
             self.size -= 1
 
-
 # Инициализация пула SSH соединений
 ssh_pool = SSHConnectionPool(max_size=5)
-
 
 # SSH только для keenetic CLI с таймаутом 5 секунд
 async def send_commands_via_ssh(router_ip: str, ssh_port: int, login: str, password: str, commands: List[str]) -> None:
@@ -167,11 +156,9 @@ async def send_commands_via_ssh(router_ip: str, ssh_port: int, login: str, passw
         if connection:
             await ssh_pool.release_connection(connection)
 
-
 # Функция кэширования IP-адресов для снижения частоты обращения к роутеру
 def ip_cache(address: str) -> bool:
     return address in ip_cache_data
-
 
 # Основная функция
 async def main() -> None:
@@ -248,9 +235,27 @@ async def main() -> None:
                             logging.error(f"Ошибка подключения: {e}")
                             del ip_cache_data[address.rstrip('.')]
                     else:
-                        remaining_ttl = int((ip_cache_data[address.rstrip('.')] + 10800 - time.time()) / 60)
-                        logging.info(f"Маршрут для {address.rstrip('.')} был добавлен ранее, обновление через:"
-                                     f" {remaining_ttl} минут")
+                        cache_entry_time = ip_cache_data[address.rstrip('.')]
+                        if time.time() - cache_entry_time >= 21600:  # TTL check for 6 hours
+                            logging.info(f"Время жизни {address.rstrip('.')} истекло, обновляем маршрут.")
+                            commands = [f"ip route {address.rstrip('.')}/32 {eth_id}" for address in resolved_addresses]
+                            ip_cache_data[address.rstrip('.')] = time.time()
+                            try:
+                                await asyncio.wait_for(
+                                    send_commands_via_ssh(router_ip, router_port, login, password, commands), timeout=5
+                                )
+                            except (asyncssh.Error, ConnectionResetError) as e:
+                                logging.error(f"Ошибка при выполнении команд через SSH для {address}: {e}")
+                                del ip_cache_data[address.rstrip('.')]
+                            except asyncio.TimeoutError:
+                                logging.error(f"Не удалось соединиться с {router_ip}:{router_port}")
+                                del ip_cache_data[address.rstrip('.')]
+                            except OSError as e:
+                                logging.error(f"Ошибка подключения: {e}")
+                                del ip_cache_data[address.rstrip('.')]
+                        else:
+                            remaining_ttl = int((21600 - (time.time() - cache_entry_time)) / 60)
+                            logging.info(f"{address.rstrip('.')} был добавлен ранее, оставшееся время жизни: {remaining_ttl} минут")
 
     async def recvfrom_loop(dns_servers: List[str], domain_list: List[str]) -> None:
         request_counter = 0

@@ -9,23 +9,13 @@ import asyncssh
 from cachetools import TTLCache
 from dnslib import DNSRecord, DNSError
 
-
 # Настройка логгирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 
 # Кэш для хранения IP-адресов и DNS имен
 ip_cache_data = TTLCache(maxsize=1000, ttl=21600)  # Кэш IP адресов с TTL 6 часов
-dns_cache_data = TTLCache(maxsize=1000, ttl=60)    # Кэш DNS имен с TTL 1 минута
-
-
-# Глобальная переменная для хранения доменных имен
-domain_list = []
-
-
-# Переменные для работы с двумя DNS серверами
-dns_servers = []
-request_counter = 0
+dns_cache_data = TTLCache(maxsize=1000, ttl=60)  # Кэш DNS имен с TTL 1 минута
 
 
 # Читаем конфиг
@@ -56,15 +46,13 @@ def load_domain_list(domain_file: str) -> List[str]:
 
 
 # Функция для отправки DNS запросов к публичному DNS серверу
-async def send_dns_query(data: bytes) -> Optional[bytes]:
-    global request_counter
+async def send_dns_query(data: bytes, dns_servers: List[str], request_counter: int) -> Optional[bytes]:
     loop = asyncio.get_event_loop()
     client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    client_socket.settimeout(5)  # Устанавливаем тайм-аут на 5 секунд
+    client_socket.settimeout(2)  # Устанавливаем тайм-аут на 2 секунды
 
     # Определяем текущий DNS сервер
     current_dns = dns_servers[request_counter % len(dns_servers)]
-    request_counter += 1
 
     try:
         await loop.run_in_executor(None, client_socket.sendto, data, (current_dns, 53))
@@ -105,7 +93,7 @@ def dns_cache(domain: str, resolved_addresses: List[str]) -> List[str]:
 
 
 # Поиск DNS имени в фильтре
-def compare_dns(f_domain: str) -> bool:
+def compare_dns(f_domain: str, domain_list: List[str]) -> bool:
     try:
         name_parts = f_domain.rstrip('.').split('.')
         for filter_domain in domain_list:
@@ -121,16 +109,28 @@ def compare_dns(f_domain: str) -> bool:
     return False
 
 
-# SSH только для keenetic CLI
+# SSH только для keenetic CLI с таймаутом 5 секунд
 async def send_commands_via_ssh(router_ip: str, ssh_port: int, login: str, password: str, commands: List[str]) -> None:
     try:
-        conn = await asyncssh.connect(router_ip, port=ssh_port, username=login, password=password, known_hosts=None)
-        for command in commands:
-            result = await conn.run(command)
-            if result.stderr:
-                logging.error(result.stderr)
+        async with asyncssh.connect(
+                router_ip, port=ssh_port, username=login, password=password, known_hosts=None
+        ) as conn:
+            await asyncio.gather(*(conn.run(command) for command in commands))
     except asyncssh.Error as e:
         logging.error(f"Ошибка при выполнении команд через SSH: {e}")
+        # Убираем IP из кэша:
+        for command in commands:
+            ip_address = command.split()[2]
+            if ip_cache(ip_address):
+                del ip_cache_data[ip_address]
+        raise
+    except asyncio.TimeoutError:
+        logging.error(f"Не удалось соединиться с {router_ip}")
+        for command in commands:
+            ip_address = command.split()[2]
+            if ip_cache(ip_address):
+                del ip_cache_data[ip_address]
+        raise
 
 
 # Функция кэширования IP-адресов для снижения частоты обращения к роутеру
@@ -140,9 +140,6 @@ def ip_cache(address: str) -> bool:
 
 # Основная функция
 async def main() -> None:
-    global domain_list
-    global dns_servers
-    
     config_data = read_config('config.ini')
     if not config_data:
         return
@@ -158,13 +155,13 @@ async def main() -> None:
         public_dns_2 = config_data['public_dns_2']
         server_ip = config_data['server_ip']
         server_port = int(config_data['server_port'])
-        
+
         # Загрузка доменных имен в память
         domain_list = load_domain_list(domain_file)
-        
+
         # Инициализация списка DNS серверов
         dns_servers = [public_dns_1, public_dns_2]
-        
+
     except KeyError as e:
         logging.error(f"Ошибка чтения параметров конфигурации: отсутствует ключ {e}")
         return
@@ -175,40 +172,68 @@ async def main() -> None:
     server_socket.bind((server_ip, server_port))
     logging.info(f'DNS сервер запущен {server_ip}:{server_port}')
 
-    async def handle_client(data: bytes, client_address: Tuple[str, int]) -> None:
-        dns_response = await send_dns_query(data)
+    async def handle_client(data: bytes, client_address: Tuple[str, int], dns_servers: List[str], request_counter: int,
+                            domain_list: List[str]) -> None:
+        try:
+            dns_query = DNSRecord.parse(data)
+            domain = str(dns_query.q.qname)
+
+            if domain in dns_cache_data:
+                cached_response = dns_cache_data[domain]
+                server_socket.sendto(cached_response, client_address)
+                logging.info(f"Ответ для {domain} взят из кэша.")
+                return
+        except DNSError as e:
+            logging.error(f"Ошибка парсинга DNS запроса: {e}")
+            return
+
+        dns_response = await send_dns_query(data, dns_servers, request_counter)
         if dns_response:
             f_domain, resolved_addresses = process_dns_response(dns_response)
             server_socket.sendto(dns_response, client_address)
-            match = compare_dns(f_domain)
+            dns_cache_data[f_domain] = dns_response  # Кэшируем ответ DNS
+            match = compare_dns(f_domain, domain_list)
             if match:
                 for address in resolved_addresses:
                     if not ip_cache(address.rstrip('.')):
                         commands = [f"ip route {address.rstrip('.')}/32 {eth_id}" for address in resolved_addresses]
-                        logging.info(f"домен {f_domain} найден в фильтре - добавляем маршрут для него")
+                        logging.info(f"Домен {f_domain} найден в фильтре")
                         ip_cache_data[address.rstrip('.')] = time.time()
                         try:
-                            await send_commands_via_ssh(router_ip, router_port, login, password, commands)
+                            await asyncio.wait_for(
+                                send_commands_via_ssh(router_ip, router_port, login, password, commands), timeout=5
+                            )
                         except (asyncssh.Error, ConnectionResetError) as e:
                             logging.error(f"Ошибка при выполнении команд через SSH для {address}: {e}")
+                            del ip_cache_data[address.rstrip('.')]
+                        except asyncio.TimeoutError:
+                            logging.error(f"Не удалось соединиться с {router_ip}:{router_port}")
+                            del ip_cache_data[address.rstrip('.')]
+                        except OSError as e:
+                            logging.error(f"Ошибка подключения: {e}")
+                            del ip_cache_data[address.rstrip('.')]
                     else:
                         remaining_ttl = int((ip_cache_data[address.rstrip('.')] + 10800 - time.time()) / 60)
-                        logging.info(f"{address.rstrip('.')} кэширован, оставшееся время жизни: {remaining_ttl} минут")
+                        logging.info(f"{address.rstrip('.')} был добавлен ранее, оставшееся время жизни:"
+                                     f" {remaining_ttl} минут")
 
-    async def recvfrom_loop():
+    async def recvfrom_loop(dns_servers: List[str], domain_list: List[str]) -> None:
+        request_counter = 0
         while True:
             try:
                 data, client_address = await loop.run_in_executor(None, server_socket.recvfrom, 1024)
-                asyncio.create_task(handle_client(data, client_address))
+                asyncio.create_task(handle_client(data, client_address, dns_servers, request_counter, domain_list))
+                request_counter += 1
             except socket.timeout:
                 continue
             except Exception as E:
                 logging.error(f"Ошибка в основной петле: {E}")
 
     try:
-        await recvfrom_loop()
+        await recvfrom_loop(dns_servers, domain_list)
     finally:
         server_socket.close()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

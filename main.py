@@ -18,7 +18,7 @@ ip_cache_data = TTLCache(maxsize=1000, ttl=21600)  # Кэш IP адресов с
 dns_cache_data = TTLCache(maxsize=1000, ttl=60)  # Кэш DNS имен с TTL 1 минута
 
 
-# Читаем конфиг
+# Функция чтения конфигурации
 def read_config(filename: str) -> Optional[configparser.SectionProxy]:
     config = configparser.ConfigParser()
     try:
@@ -33,7 +33,7 @@ def read_config(filename: str) -> Optional[configparser.SectionProxy]:
         return None
 
 
-# Загрузка доменных имен в память
+# Функция загрузки доменных имен в память
 def load_domain_list(domain_file: str) -> List[str]:
     try:
         with open(domain_file, 'r', encoding='utf-8-sig') as file:
@@ -45,7 +45,7 @@ def load_domain_list(domain_file: str) -> List[str]:
         return []
 
 
-# Функция для отправки DNS запросов к публичному DNS серверу
+# Функция для отправки DNS запросов к публичным DNS серверам
 async def send_dns_query(data: bytes, dns_servers: List[str], request_counter: int) -> Optional[bytes]:
     loop = asyncio.get_event_loop()
     client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -78,7 +78,7 @@ def process_dns_response(dns_response: bytes) -> Tuple[str, List[str]]:
             if r.rtype == 1:  # A record
                 resolved_addresses.append(str(r.rdata))
                 domain = str(r.rname)
-                logging.info(f"Resolved {r.rname} to {r.rdata}")
+                logging.info(f"{r.rname} решен в {r.rdata}")
     except DNSError as e:
         logging.error(f"Ошибка обработки DNS ответа: {e}")
     return domain, resolved_addresses
@@ -92,7 +92,7 @@ def dns_cache(domain: str, resolved_addresses: List[str]) -> List[str]:
     return resolved_addresses
 
 
-# Поиск DNS имени в фильтре
+# Функция сравнения DNS имени с фильтром
 def compare_dns(f_domain: str, domain_list: List[str]) -> bool:
     try:
         name_parts = f_domain.rstrip('.').split('.')
@@ -109,16 +109,48 @@ def compare_dns(f_domain: str, domain_list: List[str]) -> bool:
     return False
 
 
+# Класс для пула SSH соединений
+class SSHConnectionPool:
+    def __init__(self, max_size: int):
+        self.pool = asyncio.Queue(max_size)
+        self.max_size = max_size
+        self.size = 0
+
+    async def get_connection(self, router_ip: str, ssh_port: int, login: str,
+                             password: str) -> asyncssh.SSHClientConnection:
+        if self.pool.empty() and self.size < self.max_size:
+            connection = await asyncssh.connect(
+                router_ip, port=ssh_port, username=login, password=password, known_hosts=None
+            )
+            self.size += 1
+            return connection
+        else:
+            return await self.pool.get()
+
+    async def release_connection(self, connection: asyncssh.SSHClientConnection):
+        await self.pool.put(connection)
+
+    async def close_all(self):
+        while not self.pool.empty():
+            connection = await self.pool.get()
+            connection.close()
+            self.size -= 1
+
+
+# Инициализация пула SSH соединений
+ssh_pool = SSHConnectionPool(max_size=5)
+
+
 # SSH только для keenetic CLI с таймаутом 5 секунд
 async def send_commands_via_ssh(router_ip: str, ssh_port: int, login: str, password: str, commands: List[str]) -> None:
+    connection = None
     try:
-        async with asyncssh.connect(
-                router_ip, port=ssh_port, username=login, password=password, known_hosts=None
-        ) as conn:
-            await asyncio.gather(*(conn.run(command) for command in commands))
+        connection = await ssh_pool.get_connection(router_ip, ssh_port, login, password)
+        results = await asyncio.gather(*(connection.run(command) for command in commands))
+        for result in results:
+            logging.info(f"Command result: {result.stdout}")
     except asyncssh.Error as e:
         logging.error(f"Ошибка при выполнении команд через SSH: {e}")
-        # Убираем IP из кэша:
         for command in commands:
             ip_address = command.split()[2]
             if ip_cache(ip_address):
@@ -131,6 +163,9 @@ async def send_commands_via_ssh(router_ip: str, ssh_port: int, login: str, passw
             if ip_cache(ip_address):
                 del ip_cache_data[ip_address]
         raise
+    finally:
+        if connection:
+            await ssh_pool.release_connection(connection)
 
 
 # Функция кэширования IP-адресов для снижения частоты обращения к роутеру
@@ -214,7 +249,7 @@ async def main() -> None:
                             del ip_cache_data[address.rstrip('.')]
                     else:
                         remaining_ttl = int((ip_cache_data[address.rstrip('.')] + 10800 - time.time()) / 60)
-                        logging.info(f"{address.rstrip('.')} был добавлен ранее, оставшееся время жизни:"
+                        logging.info(f"Маршрут для {address.rstrip('.')} был добавлен ранее, обновление через:"
                                      f" {remaining_ttl} минут")
 
     async def recvfrom_loop(dns_servers: List[str], domain_list: List[str]) -> None:
@@ -233,7 +268,7 @@ async def main() -> None:
         await recvfrom_loop(dns_servers, domain_list)
     finally:
         server_socket.close()
-
+        await ssh_pool.close_all()
 
 if __name__ == "__main__":
     asyncio.run(main())

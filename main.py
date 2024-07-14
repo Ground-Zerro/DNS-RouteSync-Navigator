@@ -9,6 +9,7 @@ import asyncssh
 from cachetools import TTLCache
 from dnslib import DNSRecord, DNSError
 
+
 # Настройка логгирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 

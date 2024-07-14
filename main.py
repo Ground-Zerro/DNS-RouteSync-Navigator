@@ -12,9 +12,11 @@ from dnslib import DNSRecord, DNSError
 # Настройка логгирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+
 # Кэш для хранения IP-адресов и DNS имен
 ip_cache_data = TTLCache(maxsize=1000, ttl=21600)  # Кэш IP адресов с TTL 6 часов
 dns_cache_data = TTLCache(maxsize=1000, ttl=60)  # Кэш DNS имен с TTL 1 минута
+
 
 # Читаем конфиг
 def read_config(filename: str) -> Optional[configparser.SectionProxy]:
@@ -30,6 +32,7 @@ def read_config(filename: str) -> Optional[configparser.SectionProxy]:
         logging.error(f"Ошибка загрузки файла конфигурации {filename}: {e}")
         return None
 
+
 # Загрузка доменных имен в память
 def load_domain_list(domain_file: str) -> List[str]:
     try:
@@ -40,6 +43,7 @@ def load_domain_list(domain_file: str) -> List[str]:
     except Exception as e:
         logging.error(f"Ошибка загрузки доменных имен из файла {domain_file}: {e}")
         return []
+
 
 # Функция для отправки DNS запросов к публичному DNS серверу
 async def send_dns_query(data: bytes, dns_servers: List[str], request_counter: int) -> Optional[bytes]:
@@ -63,6 +67,7 @@ async def send_dns_query(data: bytes, dns_servers: List[str], request_counter: i
     finally:
         client_socket.close()
 
+
 # Функция обработки ответа от DNS сервера
 def process_dns_response(dns_response: bytes) -> Tuple[str, List[str]]:
     resolved_addresses = []
@@ -78,12 +83,14 @@ def process_dns_response(dns_response: bytes) -> Tuple[str, List[str]]:
         logging.error(f"Ошибка обработки DNS ответа: {e}")
     return domain, resolved_addresses
 
+
 # Функция кэширования DNS имен для снижения частоты обращения к DNS серверу
 def dns_cache(domain: str, resolved_addresses: List[str]) -> List[str]:
     if domain in dns_cache_data:
         return dns_cache_data[domain]
     dns_cache_data[domain] = resolved_addresses
     return resolved_addresses
+
 
 # Поиск DNS имени в фильтре
 def compare_dns(f_domain: str, domain_list: List[str]) -> bool:
@@ -101,6 +108,7 @@ def compare_dns(f_domain: str, domain_list: List[str]) -> bool:
         logging.error(f"Ошибка сравнения DNS: {e}")
     return False
 
+
 # Класс для пула SSH соединений
 class SSHConnectionPool:
     def __init__(self, max_size: int):
@@ -108,7 +116,8 @@ class SSHConnectionPool:
         self.max_size = max_size
         self.size = 0
 
-    async def get_connection(self, router_ip: str, ssh_port: int, login: str, password: str) -> asyncssh.SSHClientConnection:
+    async def get_connection(self, router_ip: str, ssh_port: int, login: str,
+                             password: str) -> asyncssh.SSHClientConnection:
         if self.pool.empty() and self.size < self.max_size:
             connection = await asyncssh.connect(
                 router_ip, port=ssh_port, username=login, password=password, known_hosts=None
@@ -127,8 +136,10 @@ class SSHConnectionPool:
             connection.close()
             self.size -= 1
 
+
 # Инициализация пула SSH соединений
 ssh_pool = SSHConnectionPool(max_size=5)
+
 
 # SSH только для keenetic CLI с таймаутом 5 секунд
 async def send_commands_via_ssh(router_ip: str, ssh_port: int, login: str, password: str, commands: List[str]) -> None:
@@ -156,9 +167,11 @@ async def send_commands_via_ssh(router_ip: str, ssh_port: int, login: str, passw
         if connection:
             await ssh_pool.release_connection(connection)
 
+
 # Функция кэширования IP-адресов для снижения частоты обращения к роутеру
 def ip_cache(address: str) -> bool:
     return address in ip_cache_data
+
 
 # Основная функция
 async def main() -> None:
@@ -255,7 +268,8 @@ async def main() -> None:
                                 del ip_cache_data[address.rstrip('.')]
                         else:
                             remaining_ttl = int((21600 - (time.time() - cache_entry_time)) / 60)
-                            logging.info(f"{address.rstrip('.')} был добавлен ранее, оставшееся время жизни: {remaining_ttl} минут")
+                            logging.info(f"{address.rstrip('.')} был добавлен ранее, оставшееся время жизни:"
+                                         f" {remaining_ttl} минут")
 
     async def recvfrom_loop(dns_servers: List[str], domain_list: List[str]) -> None:
         request_counter = 0

@@ -16,10 +16,10 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 # Кэш для хранения IP-адресов и DNS имен
 ip_cache_data = TTLCache(maxsize=1000, ttl=21600)  # Кэш IP адресов с TTL 6 часов
-dns_cache_data = TTLCache(maxsize=1000, ttl=60)  # Кэш DNS имен с TTL 1 минута
+dns_cache_data = TTLCache(maxsize=1000, ttl=60)    # Кэш DNS имен с TTL 1 минута
 
 
-# Читаем конфиг
+# Чтение конфигурационного файла
 def read_config(filename: str) -> Optional[configparser.SectionProxy]:
     config = configparser.ConfigParser()
     try:
@@ -46,30 +46,25 @@ def load_domain_list(domain_file: str) -> List[str]:
         return []
 
 
-# Функция для отправки DNS запросов к публичному DNS серверу
+# Отправка DNS запроса к публичному DNS серверу
 async def send_dns_query(data: bytes, dns_servers: List[str], request_counter: int) -> Optional[bytes]:
     loop = asyncio.get_event_loop()
-    client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    client_socket.settimeout(2)  # Устанавливаем тайм-аут на 2 секунды
-
-    # Определяем текущий DNS сервер
     current_dns = dns_servers[request_counter % len(dns_servers)]
-
     try:
-        await loop.run_in_executor(None, client_socket.sendto, data, (current_dns, 53))
-        response, _ = await loop.run_in_executor(None, client_socket.recvfrom, 1024)
-        return response
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client_socket:
+            client_socket.settimeout(2)
+            await loop.run_in_executor(None, client_socket.sendto, data, (current_dns, 53))
+            response, _ = await loop.run_in_executor(None, client_socket.recvfrom, 1024)
+            return response
     except socket.timeout:
         logging.warning(f"Тайм-аут при отправке DNS запроса к {current_dns}")
         return None
     except Exception as e:
         logging.error(f"Ошибка отправки DNS запроса: {e}")
         return None
-    finally:
-        client_socket.close()
 
 
-# Функция обработки ответа от DNS сервера
+# Обработка ответа от DNS сервера
 def process_dns_response(dns_response: bytes) -> Tuple[str, List[str]]:
     resolved_addresses = []
     domain = ""
@@ -85,7 +80,7 @@ def process_dns_response(dns_response: bytes) -> Tuple[str, List[str]]:
     return domain, resolved_addresses
 
 
-# Функция кэширования DNS имен для снижения частоты обращения к DNS серверу
+# Кэширование DNS имен для снижения частоты обращения к DNS серверу
 def dns_cache(domain: str, resolved_addresses: List[str]) -> List[str]:
     if domain in dns_cache_data:
         return dns_cache_data[domain]
@@ -95,18 +90,14 @@ def dns_cache(domain: str, resolved_addresses: List[str]) -> List[str]:
 
 # Поиск DNS имени в фильтре
 def compare_dns(f_domain: str, domain_list: List[str]) -> bool:
-    try:
-        name_parts = f_domain.rstrip('.').split('.')
-        for filter_domain in domain_list:
-            filter_domain_parts = filter_domain.split('.')
-            if len(name_parts) < len(filter_domain_parts):
-                continue
-            match = all(name_parts[i] == filter_domain_parts[i]
-                        for i in range(-1, -len(filter_domain_parts) - 1, -1))
-            if match:
-                return True
-    except Exception as e:
-        logging.error(f"Ошибка сравнения DNS: {e}")
+    name_parts = f_domain.rstrip('.').split('.')
+    for filter_domain in domain_list:
+        filter_domain_parts = filter_domain.split('.')
+        if len(name_parts) < len(filter_domain_parts):
+            continue
+        match = all(name_parts[i] == filter_domain_parts[i] for i in range(-1, -len(filter_domain_parts) - 1, -1))
+        if match:
+            return True
     return False
 
 
@@ -142,7 +133,7 @@ class SSHConnectionPool:
 ssh_pool = SSHConnectionPool(max_size=5)
 
 
-# SSH только для keenetic CLI с таймаутом 5 секунд
+# Отправка команд через SSH
 async def send_commands_via_ssh(router_ip: str, ssh_port: int, login: str, password: str, commands: List[str]) -> None:
     connection = None
     try:
@@ -169,7 +160,7 @@ async def send_commands_via_ssh(router_ip: str, ssh_port: int, login: str, passw
             await ssh_pool.release_connection(connection)
 
 
-# Функция кэширования IP-адресов для снижения частоты обращения к роутеру
+# Кэширование IP-адресов
 def ip_cache(address: str) -> bool:
     return address in ip_cache_data
 

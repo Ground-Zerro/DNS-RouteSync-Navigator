@@ -9,7 +9,6 @@ import asyncssh
 from cachetools import TTLCache
 from dnslib import DNSRecord, DNSError
 
-
 # Настройка логгирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -112,7 +111,7 @@ class SSHConnectionPool:
                              password: str) -> asyncssh.SSHClientConnection:
         if self.pool.empty() and self.size < self.max_size:
             connection = await asyncssh.connect(
-                router_ip, port=ssh_port, username=login, password=password, known_hosts=None
+                router_ip, port=ssh_port, username=login, password=password, known_hosts=None, keepalive_interval=30
             )
             self.size += 1
             return connection

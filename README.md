@@ -12,12 +12,7 @@
 
 
 **Зависимости:** Для работы DNS-RouteSync-Navigator необходимо наличие следующих библиотек Python:
-- telnetlib3
-- configparser
-- dnslib
-- asyncssh
-- cachetools
-
+- configparser, dnslib, asyncssh, cachetools
 *Не забудьте установить их перед запуском:*
 ```
 pip3 install -r requirements.txt

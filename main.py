@@ -133,6 +133,8 @@ def get_remaining_ttl(address: str) -> Optional[int]:
     return None
 
 # Класс для работы с одним SSH соединением
+# Класс для работы с одним SSH соединением
+# Класс для работы с одним SSH соединением
 class SSHConnectionManager:
     def __init__(self):
         self.connection: Optional[asyncssh.SSHClientConnection] = None
@@ -140,10 +142,20 @@ class SSHConnectionManager:
 
     async def connect(self, router_ip: str, ssh_port: int, login: str, password: str):
         if not self.connection:
-            self.connection = await asyncssh.connect(
-                router_ip, port=ssh_port, username=login, password=password, known_hosts=None
-            )
-            asyncio.create_task(self.keepalive())
+            try:
+                self.connection = await asyncssh.connect(
+                    router_ip, port=ssh_port, username=login, password=password, known_hosts=None
+                )
+                asyncio.create_task(self.keepalive())
+            except asyncssh.PermissionDenied as e:
+                logging.error(f"Ошибка подключения по SSH к {router_ip}:{ssh_port} - Доступ запрещен: {e}")
+                # Не останавливаем выполнение программы, просто не подключаемся
+            except asyncssh.Error as e:
+                logging.error(f"Ошибка подключения по SSH к {router_ip}:{ssh_port} - {e}")
+                # Не останавливаем выполнение программы, просто не подключаемся
+            except Exception as e:
+                logging.error(f"Неизвестная ошибка при подключении по SSH к {router_ip}:{ssh_port} - {e}")
+                # Не останавливаем выполнение программы, просто не подключаемся
 
     async def keepalive(self):
         while self.connection:
@@ -153,6 +165,7 @@ class SSHConnectionManager:
             except Exception as e:
                 logging.error(f"Ошибка при поддержке SSH соединения: {e}")
                 break
+
 
     async def run_commands(self, commands: List[str]):
         if not self.connection:
@@ -164,6 +177,7 @@ class SSHConnectionManager:
         except asyncssh.Error as e:
             logging.error(f"Ошибка при выполнении команд через SSH: {e}")
             raise
+
 
 # Инициализация SSH менеджера
 ssh_manager = SSHConnectionManager()

@@ -1,4 +1,4 @@
 configparser~=7.0.0
-dnslib~=0.9.24
+dnslib~=0.9.25
 asyncssh~=2.14.2
 cachetools~=5.3.3

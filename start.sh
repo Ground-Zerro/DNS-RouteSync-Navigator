@@ -13,9 +13,9 @@ if [ ! -f "$SCRIPT_DIR/config.ini" ] || [ ! -f "$SCRIPT_DIR/main.py" ]; then
         echo "Скачивание файлов..."
 
         # Скачивание файлов
-        curl -L -o "$SCRIPT_DIR/main.py" "https://github.com/Ground-Zerro/DNS-RouteSync-Navigator/raw/main/main.py"
-        curl -L -o "$SCRIPT_DIR/config.ini" "https://github.com/Ground-Zerro/DNS-RouteSync-Navigator/raw/main/config.ini"
-        curl -L -o "$SCRIPT_DIR/filter.txt" "https://github.com/Ground-Zerro/DNS-RouteSync-Navigator/raw/main/filter.txt"
+        curl -L -o "$SCRIPT_DIR/main.py" "https://raw.githubusercontent.com/Ground-Zerro/DNS-RouteSync-Navigator/main/main.py"
+        curl -L -o "$SCRIPT_DIR/config.ini" "https://raw.githubusercontent.com/Ground-Zerro/DNS-RouteSync-Navigator/main/config.ini"
+        curl -L -o "$SCRIPT_DIR/filter.txt" "https://raw.githubusercontent.com/Ground-Zerro/DNS-RouteSync-Navigator/main/filter.txt"
 
         if [ $? -eq 0 ]; then
             echo "Router Sync Navigator загружен, перед запуском укажите настройки в config.ini и домены в filter.txt."

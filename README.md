@@ -37,7 +37,7 @@
 7. Установите IP машины с запущенным DNS-RouteSync-Navigator в качестве основного DNS-сервера на роутере или ПК.
 
 <details>
-    <summary>Скрипт под Linux для облегчения работы с DNS-RouteSync-Navigator под Linux: (нажать, чтобы открыть)</summary>
+    <summary>Bash скрипт Linux для облегчения работы с DNS-RouteSync-Navigator (нажать, чтобы открыть)</summary>
 
 **Что умеет:**
 - Установка DNS-RouteSync-Navigator в качестве системной службы.

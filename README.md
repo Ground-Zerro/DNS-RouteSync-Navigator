@@ -1,5 +1,5 @@
 ## DNS-RouteSync-Navigator
-В работе: [DoT шифрование](https://github.com/Ground-Zerro/DNS-RouteSync-Navigator/issues/3#issuecomment-2302113035) для защиты DNS запросов от подмены провайдером. Доступен Alpha релиз - скачать можно по ссылке в теме.
+В работе: [DoH шифрование](https://github.com/Ground-Zerro/DNS-RouteSync-Navigator/issues/3#issuecomment-2302113035) для защиты DNS запросов от подмены провайдером. Доступен Alpha релиз - скачать можно по ссылке в теме.
 
 <details>
    <summary>История изменений (нажать, чтобы открыть)</summary>

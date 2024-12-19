@@ -1,6 +1,4 @@
 configparser~=7.0.0
 dnslib~=0.9.25
 asyncssh~=2.14.2
-dnspython~=2.6.1
-httpx~=0.27.0
-aiohttp~=3.10.5
+cachetools~=5.3.3

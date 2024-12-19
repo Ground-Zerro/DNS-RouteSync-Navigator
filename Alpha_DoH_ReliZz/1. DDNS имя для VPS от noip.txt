@@ -1,0 +1,18 @@
+https://my.noip.com/dynamic-dns
+
+Регистрируемся.
+
+Далее в левом меню:
+
+Dynamic DNS
+
+No-IP Hostnames
+
+кнопка:
+Create Hostname
+
+Выбираем DDNS имя, вставляем IP вашего сервера.
+
+
+ВНИМАНИЕ!
+Бесплатно доступен только 1 DDNS домен!

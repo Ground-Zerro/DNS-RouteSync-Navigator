@@ -76,5 +76,17 @@
     ```
 </details>
 
+**Траблшутинг:**
+Если рукается на что-то типа `X509_V_FLAG_EXPLICIT_POLICY`  
+Обнови pyOpenSSL и cryptography:
+```
+pip3 install --upgrade pyOpenSSL cryptography
+```
+Если продолжает ругаться - откати `pyOpenSSL` на рабочую версию (например, 23.2.0):
+```
+pip3 install pyOpenSSL==23.2.0
+```
+
+
 ##### Протестировано на Windows 11, Ubuntu 20.04/22.04
 От автора: [DNS-RouteSync-Navigator](https://github.com/Ground-Zerro/DNS-RouteSync-Navigator#dns-routesync-navigator) является продолжением проекта [DomainMapper](https://github.com/Ground-Zerro/DomainMapper) и нацелено на предоставление альтернативы OPKG пакетам, реализующим вопросы перенаправления трафика, для младших моделей роутеров Keenetic без USB.

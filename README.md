@@ -76,8 +76,8 @@
     ```
 </details>
 
-**Траблшутинг:**
-Если рукается на что-то типа `X509_V_FLAG_EXPLICIT_POLICY`  
+## Траблшутинг
+Если ругается на что-то типа `X509_V_FLAG_EXPLICIT_POLICY`  
 Обнови pyOpenSSL и cryptography:
 ```
 pip3 install --upgrade pyOpenSSL cryptography

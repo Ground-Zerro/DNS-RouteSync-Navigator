@@ -1,0 +1,9 @@
+{
+  "host": "192.168.2.1",
+  "port": "22",
+  "user": "root",
+  "password": "keenetic",
+  "tun_name": "nwg0",
+  "ipset_name": "test",
+  "interval": 2
+}
